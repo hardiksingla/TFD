@@ -1,0 +1,67 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User table with name, password and role
+model User {
+  id       String   @id @default(cuid())
+  username String   @unique
+  name     String
+  password String   // Should be hashed in your application
+  role     UserRole
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  createdTasks Task[] @relation("CreatedTasks")
+
+  @@map("users")
+}
+
+enum UserRole {
+  MANAGER
+  ADMIN
+  ENGINEER
+}
+
+// Tasks table with all required fields
+model Task {
+  id          String     @id @default(cuid())
+  project     String
+  timeSlots   Json       // Array of {startDateTime, endDateTime} objects
+  assignedTo  String[]   // Array of user IDs with engineer role
+  contactNo   String
+  remarks     String?
+  priority    Priority   @default(NORMAL)
+  status      TaskStatus @default(ACTIVE)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // Relations
+  createdBy   User   @relation("CreatedTasks", fields: [createdById], references: [id])
+  createdById String
+
+  @@map("tasks")
+}
+
+enum Priority {
+  HIGH    // Red color
+  NORMAL  // Green color
+}
+
+enum TaskStatus {
+  ACTIVE
+  COMPLETED
+}

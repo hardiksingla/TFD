@@ -1,0 +1,37 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    container_name: tfd_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tfdadmin
+      POSTGRES_PASSWORD: securepassword
+      POSTGRES_DB: tfdmanpower
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - tfdnet
+
+
+  # backend:
+  #   build: ./backend
+  #   container_name: tfd_backend
+  #   restart: unless-stopped
+  #   ports:
+  #     - "4000:4000"
+  #   environment:
+  #     DATABASE_URL: postgres://tfdadmin:securepassword@db:5432/tfdmanpower
+  #   depends_on:
+  #     - db
+  #   networks:
+  #     - tfdnet
+
+volumes:
+  pgdata:
+
+networks:
+  tfdnet:
