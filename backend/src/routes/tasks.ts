@@ -1,4 +1,4 @@
-// routes/tasks.ts - Updated with automatic status management
+// routes/tasks.ts - Updated with optimized endpoints and availability checks
 import { Router } from "express";
 import { PrismaClient } from "../../generated/prisma";
 import { z } from "zod";
@@ -56,6 +56,71 @@ const updateTaskStatuses = async () => {
   }
 };
 
+// Function to check if engineers are available during specified time slots
+const checkEngineersAvailability = async (engineerIds: string[], timeSlots: Array<{startDateTime: string, endDateTime: string}>) => {
+  if (engineerIds.length === 0) return { available: true, conflicts: [] };
+
+  // Get all active tasks that involve any of the specified engineers
+  const conflictingTasks = await prisma.task.findMany({
+    where: {
+      status: 'ACTIVE',
+      assignedTo: {
+        hasSome: engineerIds
+      }
+    },
+    select: {
+      id: true,
+      project: true,
+      assignedTo: true,
+      timeSlots: true
+    }
+  });
+
+  const conflicts = [];
+
+  // Check each requested time slot against existing tasks
+  for (const requestedSlot of timeSlots) {
+    const requestedStart = new Date(requestedSlot.startDateTime);
+    const requestedEnd = new Date(requestedSlot.endDateTime);
+
+    for (const task of conflictingTasks) {
+      const taskTimeSlots = task.timeSlots as Array<{startDateTime: string, endDateTime: string}>;
+      
+      for (const taskSlot of taskTimeSlots) {
+        const taskStart = new Date(taskSlot.startDateTime);
+        const taskEnd = new Date(taskSlot.endDateTime);
+        
+        // Check for overlap: tasks overlap if start1 < end2 && start2 < end1
+        if (requestedStart < taskEnd && taskStart < requestedEnd) {
+          // Find which specific engineers have conflicts
+          const conflictingEngineers = task.assignedTo.filter(id => engineerIds.includes(id));
+          
+          conflicts.push({
+            taskId: task.id,
+            taskProject: task.project,
+            conflictingEngineers,
+            conflictTimeSlot: {
+              existing: {
+                start: taskStart.toISOString(),
+                end: taskEnd.toISOString()
+              },
+              requested: {
+                start: requestedStart.toISOString(),
+                end: requestedEnd.toISOString()
+              }
+            }
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    available: conflicts.length === 0,
+    conflicts
+  };
+};
+
 // Validation schemas
 const createTaskSchema = z.object({
   project: z.string().min(1, "Project is required"),
@@ -69,8 +134,8 @@ const createTaskSchema = z.object({
   remarks: z.string().optional().default("")
 });
 
-// POST /api/v1/tasks - Create new task (Manager only)
-router.post("/", authenticateToken, requireManager, async (req:any, res:any) => {
+// POST /api/v1/tasks - Create new task with availability check (Manager only)
+router.post("/", authenticateToken, requireManager, async (req: any, res: any) => {
   try {
     const taskData = createTaskSchema.parse(req.body);
     const createdById = req.user.id;
@@ -105,6 +170,16 @@ router.post("/", authenticateToken, requireManager, async (req:any, res:any) => 
       if (assignedUsers.length !== taskData.assignedTo.length) {
         return res.status(400).json({ 
           error: "One or more assigned users not found or not engineers" 
+        });
+      }
+
+      // Check engineer availability during specified time slots
+      const availabilityCheck = await checkEngineersAvailability(taskData.assignedTo, taskData.timeSlots);
+      
+      if (!availabilityCheck.available) {
+        return res.status(409).json({ 
+          error: "One or more engineers are not available during the specified time slots",
+          conflicts: availabilityCheck.conflicts
         });
       }
     }
@@ -160,8 +235,83 @@ router.post("/", authenticateToken, requireManager, async (req:any, res:any) => 
   }
 });
 
-// GET /api/v1/tasks - Get all tasks (status updated by scheduled service)
-router.get("/", authenticateToken, async (req:any, res:any) => {
+// GET /api/v1/tasks/my-tasks - Get tasks assigned to current user (Engineers)
+router.get("/my-tasks", authenticateToken, async (req: any, res: any) => {
+  try {
+    const userId = req.user.id;
+    const { status } = req.query;
+
+    // Build where clause for filtering
+    let whereClause: any = {
+      assignedTo: {
+        has: userId // PostgreSQL array contains check
+      }
+    };
+
+    // Add status filter if provided
+    if (status) {
+      whereClause.status = status;
+    }
+
+    // Fetch tasks assigned to current user
+    const tasks = await prisma.task.findMany({
+      where: whereClause,
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true
+          }
+        }
+      },
+      orderBy: [
+        { status: 'asc' }, // ACTIVE first, then COMPLETED
+        { createdAt: 'desc' }
+      ]
+    });
+
+    // Enhance tasks with assigned user details (useful for engineers working in teams)
+    const tasksWithAssignedUsers = await Promise.all(
+      tasks.map(async (task) => {
+        if (task.assignedTo && task.assignedTo.length > 0) {
+          const assignedUsers = await prisma.user.findMany({
+            where: {
+              id: { in: task.assignedTo }
+            },
+            select: {
+              id: true,
+              name: true,
+              username: true
+            }
+          });
+          
+          return {
+            ...task,
+            assignedUsers
+          };
+        }
+        
+        return {
+          ...task,
+          assignedUsers: []
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      tasks: tasksWithAssignedUsers
+    });
+
+  } catch (error) {
+    console.error("Get my tasks error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /api/v1/tasks - Get all tasks (Managers/Admins)
+router.get("/", authenticateToken, async (req: any, res: any) => {
   try {
     const { status } = req.query;
     
@@ -222,8 +372,8 @@ router.get("/", authenticateToken, async (req:any, res:any) => {
   }
 });
 
-// GET /api/v1/tasks/:id - Get single task (status updated by scheduled service)
-router.get("/:id", authenticateToken, async (req:any, res:any) => {
+// GET /api/v1/tasks/:id - Get single task
+router.get("/:id", authenticateToken, async (req: any, res: any) => {
   try {
     const { id } = req.params;
 
@@ -245,7 +395,7 @@ router.get("/:id", authenticateToken, async (req:any, res:any) => {
     }
 
     // Get assigned user details
-    let assignedUsers : any = [];
+    let assignedUsers: any = [];
     if (task.assignedTo && task.assignedTo.length > 0) {
       assignedUsers = await prisma.user.findMany({
         where: {
@@ -275,8 +425,8 @@ router.get("/:id", authenticateToken, async (req:any, res:any) => {
   }
 });
 
-// PUT /api/v1/tasks/:id - Update task with completed task protection
-router.put("/:id", authenticateToken, requireManager, async (req:any, res:any) => {
+// PUT /api/v1/tasks/:id - Update task with availability check and completed task protection
+router.put("/:id", authenticateToken, requireManager, async (req: any, res: any) => {
   try {
     const { id } = req.params;
     const updateData = createTaskSchema.partial().parse(req.body);
@@ -310,6 +460,25 @@ router.put("/:id", authenticateToken, requireManager, async (req:any, res:any) =
         return res.status(400).json({ 
           error: "One or more assigned users not found or not engineers" 
         });
+      }
+
+      // Check engineer availability if time slots are being updated
+      const timeSlots = updateData.timeSlots || existingTask.timeSlots;
+      const availabilityCheck = await checkEngineersAvailability(
+        updateData.assignedTo, 
+        timeSlots as Array<{startDateTime: string, endDateTime: string}>
+      );
+      
+      if (!availabilityCheck.available) {
+        // Filter out conflicts with the current task being updated
+        const relevantConflicts = availabilityCheck.conflicts.filter(conflict => conflict.taskId !== id);
+        
+        if (relevantConflicts.length > 0) {
+          return res.status(409).json({ 
+            error: "One or more engineers are not available during the specified time slots",
+            conflicts: relevantConflicts
+          });
+        }
       }
     }
 
@@ -363,7 +532,7 @@ router.put("/:id", authenticateToken, requireManager, async (req:any, res:any) =
 });
 
 // PUT /api/v1/tasks/update-statuses - Manual endpoint to update all task statuses
-router.put("/update-statuses", authenticateToken, async (req:any, res:any) => {
+router.put("/update-statuses", authenticateToken, async (req: any, res: any) => {
   try {
     const updatedCount = await updateTaskStatuses();
     
@@ -378,7 +547,7 @@ router.put("/update-statuses", authenticateToken, async (req:any, res:any) => {
 });
 
 // DELETE /api/v1/tasks/:id - Delete task with completed task protection
-router.delete("/:id", authenticateToken, requireManager, async (req:any, res:any) => {
+router.delete("/:id", authenticateToken, requireManager, async (req: any, res: any) => {
   try {
     const { id } = req.params;
 

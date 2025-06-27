@@ -107,12 +107,6 @@ const ManagerDashboard = () => {
       value: [...myTasks, ...otherTasks].filter(task => task.priority === 'HIGH').length.toString(),
       icon: BarChart3,
       color: 'bg-red-500'
-    },
-    {
-      title: 'Total Engineers',
-      value: '8', // This could be dynamic
-      icon: Users,
-      color: 'bg-green-500'
     }
   ];
 

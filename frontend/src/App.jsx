@@ -9,7 +9,7 @@ import CreateTaskPage from './pages/CreateTaskPage';
 import TaskDetailsPage from './pages/TaskDetailsPage';
 import CompletedTasksPage from './pages/CompletedTasksPage';
 import EngineerManagementPage from './pages/EngineerManagementPage';
-// import EngineerDashboard from './pages/EngineerDashboard';
+import EngineerDashboard from './pages/EngineerDashboard';
 
 const App = () => {
   return (
@@ -58,7 +58,7 @@ const App = () => {
           
           <Route path="/engineer" element={
             <ProtectedRoute requiredRole="ENGINEER">
-              {/* <EngineerDashboard /> */}
+              <EngineerDashboard />
             </ProtectedRoute>
           } />
           

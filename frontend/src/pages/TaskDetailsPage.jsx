@@ -1,11 +1,11 @@
-// pages/TaskDetailsPage.jsx
+// pages/TaskDetailsPage.jsx - Updated with improved time picker
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-  // Add import for CheckCircle
-import { ArrowLeft, Edit2, Save, X, Plus, Trash2, RefreshCw, User, Clock, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Edit2, Save, X, RefreshCw, User, Clock, CheckCircle } from 'lucide-react';
 import axios from 'axios';
 import { getToken } from '../utils/auth';
 import { BASE_URL } from '../config/api';
+import QuickTimePicker from '../components/QuickTimePicker';
 
 const TaskDetailsPage = () => {
   const navigate = useNavigate();
@@ -51,31 +51,25 @@ const TaskDetailsPage = () => {
     try {
       setLoading(true);
       const response = await axios.get(`${BASE_URL}/api/v1/tasks/${taskId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: { 'Authorization': `Bearer ${token}` }
       });
 
       const data = response.data;
       if (data.success) {
         setTask(data.task);
         
-        // Initialize edit form
+        // Convert task data to edit form format
+        const timeSlots = data.task.timeSlots.map((slot, index) => ({
+          id: index + 1,
+          startDate: new Date(slot.startDateTime).toISOString().split('T')[0],
+          startTime: new Date(slot.startDateTime).toTimeString().slice(0, 5),
+          endDate: new Date(slot.endDateTime).toISOString().split('T')[0],
+          endTime: new Date(slot.endDateTime).toTimeString().slice(0, 5)
+        }));
+
         setEditForm({
           project: data.task.project,
-          timeSlots: data.task.timeSlots.map((slot, index) => {
-            // Convert UTC times from database to local time for editing
-            const startDate = new Date(slot.startDateTime);
-            const endDate = new Date(slot.endDateTime);
-            
-            return {
-              id: index + 1,
-              startDate: startDate.toLocaleDateString('en-CA'), // YYYY-MM-DD format
-              startTime: startDate.toLocaleTimeString('en-GB', { hour12: false }).substring(0, 5), // HH:MM format
-              endDate: endDate.toLocaleDateString('en-CA'),
-              endTime: endDate.toLocaleTimeString('en-GB', { hour12: false }).substring(0, 5)
-            };
-          }),
+          timeSlots: timeSlots,
           assignedTo: data.task.assignedTo || [],
           contactNo: data.task.contactNo,
           priority: data.task.priority,
@@ -93,16 +87,13 @@ const TaskDetailsPage = () => {
   };
 
   const fetchAvailableEngineers = async () => {
-    // Only consider future time slots
-    const currentTime = new Date();
-    const futureTimeSlots = editForm.timeSlots.filter(slot => {
-      // Create date in local timezone for comparison
-      const endDateTime = new Date(`${slot.endDate}T${slot.endTime}`);
-      return endDateTime > currentTime;
-    }).filter(slot => slot.startDate && slot.startTime && slot.endDate && slot.endTime);
+    // Validate time slots first
+    const validTimeSlots = editForm.timeSlots.filter(slot => 
+      slot.startDate && slot.startTime && slot.endDate && slot.endTime
+    );
 
-    if (futureTimeSlots.length === 0) {
-      setError('Please specify at least one complete future time slot to check engineer availability');
+    if (validTimeSlots.length === 0) {
+      setError('Please specify at least one complete time slot to check engineer availability');
       return;
     }
 
@@ -110,8 +101,8 @@ const TaskDetailsPage = () => {
     setError('');
 
     try {
-      const timeSlots = futureTimeSlots.map(slot => {
-        // Create date objects in local timezone (IST)
+      // Convert time slots to ISO format for backend
+      const timeSlots = validTimeSlots.map(slot => {
         const startDateTime = new Date(`${slot.startDate}T${slot.startTime}:00`);
         const endDateTime = new Date(`${slot.endDate}T${slot.endTime}:00`);
         
@@ -132,26 +123,20 @@ const TaskDetailsPage = () => {
 
       const data = response.data;
       if (data.success) {
-        // Combine available engineers with currently assigned engineers
-        // to ensure we can show and manage currently assigned engineers
-        const currentlyAssignedEngineers = task.assignedUsers || [];
-        const availableEngineersSet = new Set(data.engineers.map(eng => eng.id));
+        // Combine available engineers with currently assigned ones
+        const currentlyAssigned = task.assignedUsers || [];
+        const availableWithAssigned = [
+          ...currentlyAssigned.map(user => ({
+            ...user,
+            role: 'ENGINEER',
+            isCurrentlyAssigned: true
+          })),
+          ...data.engineers.filter(eng => 
+            !currentlyAssigned.some(assigned => assigned.id === eng.id)
+          )
+        ];
         
-        // Add currently assigned engineers to the list if they're not already there
-        const allEngineers = [...data.engineers];
-        currentlyAssignedEngineers.forEach(assignedEng => {
-          if (!availableEngineersSet.has(assignedEng.id)) {
-            allEngineers.push({
-              id: assignedEng.id,
-              username: assignedEng.username,
-              name: assignedEng.name,
-              role: 'ENGINEER',
-              isCurrentlyAssigned: true // Flag to show they're currently assigned but not available
-            });
-          }
-        });
-        
-        setAvailableEngineers(allEngineers);
+        setAvailableEngineers(availableWithAssigned);
       } else {
         setError('Failed to fetch available engineers');
       }
@@ -163,36 +148,18 @@ const TaskDetailsPage = () => {
     }
   };
 
-  const addTimeSlot = () => {
-    const newTimeSlot = {
-      id: Date.now(),
-      startDate: '',
-      startTime: '',
-      endDate: '',
-      endTime: ''
-    };
+  // Handle time slots change from QuickTimePicker
+  const handleTimeSlotsChange = (newTimeSlots) => {
     setEditForm(prev => ({
       ...prev,
-      timeSlots: [...prev.timeSlots, newTimeSlot]
+      timeSlots: newTimeSlots
     }));
-  };
-
-  const removeTimeSlot = (id) => {
-    if (editForm.timeSlots.length > 1) {
-      setEditForm(prev => ({
-        ...prev,
-        timeSlots: prev.timeSlots.filter(slot => slot.id !== id)
-      }));
+    
+    // Clear available engineers when time slots change (except currently assigned)
+    if (availableEngineers.length > 0) {
+      const currentlyAssigned = availableEngineers.filter(eng => eng.isCurrentlyAssigned);
+      setAvailableEngineers(currentlyAssigned);
     }
-  };
-
-  const updateTimeSlot = (id, field, value) => {
-    setEditForm(prev => ({
-      ...prev,
-      timeSlots: prev.timeSlots.map(slot =>
-        slot.id === id ? { ...slot, [field]: value } : slot
-      )
-    }));
   };
 
   const toggleEngineerSelection = (engineer) => {
@@ -281,36 +248,43 @@ const TaskDetailsPage = () => {
         fetchTaskDetails(); // Refresh task data
         alert('Task updated successfully!');
       } else {
-        setError(data.error || 'Failed to update task');
+        if (data.conflicts) {
+          // Handle availability conflicts
+          setError(`Engineer availability conflict: ${data.error}`);
+        } else {
+          setError(data.error || 'Failed to update task');
+        }
       }
     } catch (error) {
       console.error('Error updating task:', error);
-      setError(error.response?.data?.error || 'Failed to update task. Please try again.');
+      if (error.response?.status === 409) {
+        // Conflict error - engineers not available
+        setError(error.response.data.error || 'One or more engineers are not available during the specified time slots');
+      } else {
+        setError(error.response?.data?.error || 'Failed to update task. Please try again.');
+      }
     } finally {
       setSaving(false);
     }
   };
 
-  const handleCancel = () => {
+  const handleCancelEdit = () => {
     setIsEditing(false);
     setError('');
+    setAvailableEngineers([]);
     // Reset form to original task data
     if (task) {
+      const timeSlots = task.timeSlots.map((slot, index) => ({
+        id: index + 1,
+        startDate: new Date(slot.startDateTime).toISOString().split('T')[0],
+        startTime: new Date(slot.startDateTime).toTimeString().slice(0, 5),
+        endDate: new Date(slot.endDateTime).toISOString().split('T')[0],
+        endTime: new Date(slot.endDateTime).toTimeString().slice(0, 5)
+      }));
+
       setEditForm({
         project: task.project,
-        timeSlots: task.timeSlots.map((slot, index) => {
-          // Convert UTC times from database to local time for editing
-          const startDate = new Date(slot.startDateTime);
-          const endDate = new Date(slot.endDateTime);
-          
-          return {
-            id: index + 1,
-            startDate: startDate.toLocaleDateString('en-CA'),
-            startTime: startDate.toLocaleTimeString('en-GB', { hour12: false }).substring(0, 5),
-            endDate: endDate.toLocaleDateString('en-CA'),
-            endTime: endDate.toLocaleTimeString('en-GB', { hour12: false }).substring(0, 5)
-          };
-        }),
+        timeSlots: timeSlots,
         assignedTo: task.assignedTo || [],
         contactNo: task.contactNo,
         priority: task.priority,
@@ -319,25 +293,23 @@ const TaskDetailsPage = () => {
     }
   };
 
+  const formatDateTime = (dateTimeString) => {
+    const date = new Date(dateTimeString);
+    return date.toLocaleString('en-IN', { 
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   const getPriorityColor = (priority) => {
     return priority === 'HIGH' 
       ? 'bg-red-100 text-red-800' 
       : 'bg-green-100 text-green-800';
   };
-
-  const formatDateTime = (dateTimeString) => {
-    // Convert UTC time from database to local time (IST) for display
-    const date = new Date(dateTimeString);
-    return date.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' ' + 
-           date.toLocaleTimeString('en-IN', { 
-             hour: '2-digit', 
-             minute: '2-digit',
-             timeZone: 'Asia/Kolkata'
-           });
-  };
-
-  const today = new Date().toISOString().split('T')[0];
-  const currentTime = new Date();
 
   if (loading) {
     return (
@@ -354,10 +326,11 @@ const TaskDetailsPage = () => {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <p className="text-gray-600">Task not found</p>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Task Not Found</h2>
+          <p className="text-gray-600 mb-4">The task you're looking for doesn't exist.</p>
           <button
             onClick={() => navigate('/manager')}
-            className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
             Back to Dashboard
           </button>
@@ -365,6 +338,9 @@ const TaskDetailsPage = () => {
       </div>
     );
   }
+
+  const currentTime = new Date();
+  const canEdit = task.status !== 'COMPLETED';
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -375,261 +351,191 @@ const TaskDetailsPage = () => {
             <div className="flex items-center">
               <button
                 onClick={() => navigate('/manager')}
-                className="p-2 text-gray-400 hover:text-gray-600 transition-colors rounded-lg hover:bg-gray-100 mr-3"
+                className="mr-4 p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
-                <ArrowLeft className="w-5 h-5" />
+                <ArrowLeft className="w-5 h-5 text-gray-600" />
               </button>
-              <h1 className="text-xl font-semibold text-gray-900">Task Details</h1>
+              <div>
+                <h1 className="text-xl font-semibold text-gray-900">Task Details</h1>
+                <p className="text-sm text-gray-600">{task.project}</p>
+              </div>
             </div>
-            
-            <div className="flex items-center space-x-3">
-              {task.status === 'COMPLETED' ? (
-                <div className="flex items-center space-x-2 px-4 py-2 bg-green-100 text-green-800 rounded-lg">
-                  <CheckCircle className="w-4 h-4" />
-                  <span className="text-sm font-medium">Task Completed - Read Only</span>
-                </div>
-              ) : !isEditing ? (
-                <button
-                  onClick={() => setIsEditing(true)}
-                  className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  <Edit2 className="w-4 h-4 mr-2" />
-                  Edit Task
-                </button>
-              ) : (
-                <>
+
+            {canEdit && (
+              <div className="flex space-x-2">
+                {!isEditing ? (
                   <button
-                    onClick={handleCancel}
-                    className="inline-flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                    onClick={() => setIsEditing(true)}
+                    className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                   >
-                    <X className="w-4 h-4 mr-2" />
-                    Cancel
+                    <Edit2 className="w-4 h-4 mr-2" />
+                    Edit Task
                   </button>
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
-                  >
-                    <Save className="w-4 h-4 mr-2" />
-                    {saving ? 'Saving...' : 'Save Changes'}
-                  </button>
-                </>
-              )}
-            </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={handleCancelEdit}
+                      className="inline-flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      <X className="w-4 h-4 mr-2" />
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSave}
+                      disabled={saving}
+                      className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                    >
+                      <Save className="w-4 h-4 mr-2" />
+                      {saving ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Main Details */}
-          <div className="lg:col-span-2 space-y-6">
-            {error && (
-              <div className="p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-                {error}
-              </div>
-            )}
+        {error && (
+          <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+            {error}
+          </div>
+        )}
 
-            {/* Basic Information */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Column - Task Details */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Basic Task Information */}
             <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Basic Information</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Task Information</h3>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Project
-                  </label>
-                  {isEditing ? (
+              {isEditing ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Project Name</label>
                     <input
                       type="text"
                       value={editForm.project}
                       onChange={(e) => setEditForm({ ...editForm, project: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
-                  ) : (
-                    <p className="text-gray-900">{task.project}</p>
-                  )}
-                </div>
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Contact Number
-                  </label>
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={editForm.contactNo}
-                      onChange={(e) => setEditForm({ ...editForm, contactNo: e.target.value })}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Contact Number</label>
+                      <input
+                        type="tel"
+                        value={editForm.contactNo}
+                        onChange={(e) => setEditForm({ ...editForm, contactNo: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Priority Level</label>
+                      <div className="flex space-x-4">
+                        <label className="flex items-center">
+                          <input
+                            type="radio"
+                            value="NORMAL"
+                            checked={editForm.priority === 'NORMAL'}
+                            onChange={(e) => setEditForm({ ...editForm, priority: e.target.value })}
+                            className="mr-2"
+                          />
+                          <div className="flex items-center">
+                            <div className="w-3 h-3 bg-green-500 rounded mr-2"></div>
+                            <span className="text-sm">Normal</span>
+                          </div>
+                        </label>
+                        <label className="flex items-center">
+                          <input
+                            type="radio"
+                            value="HIGH"
+                            checked={editForm.priority === 'HIGH'}
+                            onChange={(e) => setEditForm({ ...editForm, priority: e.target.value })}
+                            className="mr-2"
+                          />
+                          <div className="flex items-center">
+                            <div className="w-3 h-3 bg-red-500 rounded mr-2"></div>
+                            <span className="text-sm">High</span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Remarks</label>
+                    <textarea
+                      value={editForm.remarks}
+                      onChange={(e) => setEditForm({ ...editForm, remarks: e.target.value })}
+                      rows={3}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Enter any additional remarks or notes"
                     />
-                  ) : (
-                    <p className="text-gray-900">{task.contactNo}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700">Project</h4>
+                    <p className="text-lg text-gray-900">{task.project}</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700">Contact Number</h4>
+                      <p className="text-gray-900">{task.contactNo}</p>
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700">Priority</h4>
+                      <span className={`inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full ${getPriorityColor(task.priority)}`}>
+                        {task.priority}
+                      </span>
+                    </div>
+                  </div>
+
+                  {task.remarks && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700">Remarks</h4>
+                      <p className="text-gray-900">{task.remarks}</p>
+                    </div>
                   )}
-                </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Priority
-                  </label>
-                  {isEditing ? (
-                    <select
-                      value={editForm.priority}
-                      onChange={(e) => setEditForm({ ...editForm, priority: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="NORMAL">Normal</option>
-                      <option value="HIGH">High</option>
-                    </select>
-                  ) : (
-                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getPriorityColor(task.priority)}`}>
-                      {task.priority}
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700">Status</h4>
+                    <span className={`inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full ${
+                      task.status === 'COMPLETED' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
+                    }`}>
+                      {task.status === 'COMPLETED' && <CheckCircle className="w-3 h-3 mr-1" />}
+                      {task.status}
                     </span>
-                  )}
-                </div>
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Created By
-                  </label>
-                  <p className="text-gray-900">{task.createdBy?.name || 'Unknown'}</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Status
-                  </label>
-                  <span className={`inline-flex px-3 py-1 text-sm font-semibold rounded-full ${
-                    task.status === 'COMPLETED' 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-blue-100 text-blue-800'
-                  }`}>
-                    {task.status === 'COMPLETED' ? '✓ Completed' : 'Active'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Remarks
-                </label>
-                {isEditing ? (
-                  <textarea
-                    value={editForm.remarks}
-                    onChange={(e) => setEditForm({ ...editForm, remarks: e.target.value })}
-                    rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                ):<></>}
-              </div>
-            </div>
-
-              {/* Time Slots */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Time Slots</h3>
-                {isEditing && task.status !== 'COMPLETED' && (
-                  <button
-                    onClick={addTimeSlot}
-                    className="inline-flex items-center px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                  >
-                    <Plus className="w-4 h-4 mr-1" />
-                    Add Slot
-                  </button>
-                )}
-              </div>
-
-              {task.status === 'COMPLETED' && (
-                <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="flex items-center">
-                    <CheckCircle className="w-4 h-4 text-green-600 mr-2" />
-                    <span className="text-sm text-green-800 font-medium">
-                      This task has been completed. All time slots are in the past and cannot be modified.
-                    </span>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700">Created By</h4>
+                    <p className="text-gray-900">{task.createdBy?.name || 'Unknown'}</p>
                   </div>
                 </div>
               )}
+            </div>
 
-              {isEditing && task.status !== 'COMPLETED' ? (
-                <div className="space-y-4">
-                  {editForm.timeSlots.map((slot, index) => {
-                    const endDateTime = new Date(`${slot.endDate}T${slot.endTime}`);
-                    const isPast = endDateTime <= currentTime;
-                    
-                    return (
-                      <div key={slot.id} className={`p-4 border rounded-lg ${
-                        isPast ? 'bg-gray-50 border-gray-200' : 
-                        task.status === 'COMPLETED' ? 'bg-green-50 border-green-200' :
-                        'border-gray-200'
-                      }`}>
-                        <div className="flex items-center justify-between mb-3">
-                          <h4 className="font-medium text-gray-900">
-                            Time Slot {index + 1}
-                            {isPast && <span className="ml-2 text-xs text-red-600">(Past - Read Only)</span>}
-                            {task.status === 'COMPLETED' && <span className="ml-2 text-xs text-green-600">(Completed)</span>}
-                          </h4>
-                          {editForm.timeSlots.length > 1 && !isPast && task.status !== 'COMPLETED' && (
-                            <button
-                              onClick={() => removeTimeSlot(slot.id)}
-                              className="p-1 text-red-400 hover:text-red-600 transition-colors"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Start Date & Time
-                            </label>
-                            <div className="grid grid-cols-2 gap-2">
-                              <input
-                                type="date"
-                                value={slot.startDate}
-                                onChange={(e) => updateTimeSlot(slot.id, 'startDate', e.target.value)}
-                                min={isPast ? undefined : today}
-                                disabled={isPast || task.status === 'COMPLETED'}
-                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
-                              />
-                              <input
-                                type="time"
-                                value={slot.startTime}
-                                onChange={(e) => updateTimeSlot(slot.id, 'startTime', e.target.value)}
-                                disabled={isPast || task.status === 'COMPLETED'}
-                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
-                              />
-                            </div>
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              End Date & Time
-                            </label>
-                            <div className="grid grid-cols-2 gap-2">
-                              <input
-                                type="date"
-                                value={slot.endDate}
-                                onChange={(e) => updateTimeSlot(slot.id, 'endDate', e.target.value)}
-                                min={slot.startDate || (isPast ? undefined : today)}
-                                disabled={isPast || task.status === 'COMPLETED'}
-                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
-                              />
-                              <input
-                                type="time"
-                                value={slot.endTime}
-                                onChange={(e) => updateTimeSlot(slot.id, 'endTime', e.target.value)}
-                                disabled={isPast || task.status === 'COMPLETED'}
-                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
+            {/* Time Slots Section */}
+            {isEditing ? (
+              <QuickTimePicker 
+                timeSlots={editForm.timeSlots}
+                onTimeSlotsChange={handleTimeSlotsChange}
+              />
+            ) : (
+              <div className="bg-white rounded-lg shadow-sm p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                  <Clock className="w-5 h-5 mr-2 text-blue-600" />
+                  Schedule
+                </h3>
                 <div className="space-y-3">
                   {task.timeSlots.map((slot, index) => {
                     const startDate = new Date(slot.startDateTime);
@@ -637,7 +543,7 @@ const TaskDetailsPage = () => {
                     const isPast = endDate <= currentTime;
                     
                     return (
-                      <div key={index} className={`p-3 rounded-lg border ${
+                      <div key={index} className={`p-4 rounded-lg border ${
                         isPast ? 'bg-gray-50 border-gray-200' : 
                         task.status === 'COMPLETED' ? 'bg-green-50 border-green-200' :
                         'bg-blue-50 border-blue-200'
@@ -661,11 +567,11 @@ const TaskDetailsPage = () => {
                     );
                   })}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
-          {/* Assigned Engineers Sidebar */}
+          {/* Right Column - Engineer Assignment */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-lg shadow-sm p-6 sticky top-8">
               <div className="flex items-center justify-between mb-4">
@@ -747,7 +653,12 @@ const TaskDetailsPage = () => {
 
                   {/* Available Engineers List */}
                   <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {availableEngineers.length === 0 ? (
+                    {fetchingEngineers ? (
+                      <div className="text-center py-8">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-green-600 mx-auto"></div>
+                        <p className="mt-2 text-sm text-gray-600">Checking availability...</p>
+                      </div>
+                    ) : availableEngineers.length === 0 ? (
                       <div className="text-center py-8 text-gray-500">
                         <User className="w-8 h-8 text-gray-300 mx-auto mb-2" />
                         <p className="text-sm">No engineers data available</p>
@@ -800,13 +711,13 @@ const TaskDetailsPage = () => {
                                 <button
                                   key={engineer.id}
                                   onClick={() => toggleEngineerSelection(engineer)}
-                                  className="w-full text-left p-3 rounded-lg border border-yellow-200 bg-yellow-50 hover:bg-yellow-100 transition-colors"
+                                  className="w-full text-left p-3 rounded-lg border border-yellow-200 hover:border-yellow-300 hover:bg-yellow-50 transition-colors"
                                 >
                                   <div className="flex items-center justify-between">
                                     <div>
-                                      <p className="font-medium text-yellow-900">{engineer.name}</p>
-                                      <p className="text-sm text-yellow-700">{engineer.username}</p>
-                                      <p className="text-xs text-yellow-600">Currently assigned (may have conflicts)</p>
+                                      <p className="font-medium text-gray-900">{engineer.name}</p>
+                                      <p className="text-sm text-gray-600">{engineer.username}</p>
+                                      <p className="text-xs text-yellow-600">Previously assigned</p>
                                     </div>
                                   </div>
                                 </button>

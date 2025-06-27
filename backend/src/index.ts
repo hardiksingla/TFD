@@ -13,8 +13,16 @@ app.use(express.json());
 // Mount all API v1 routes under /api/v1
 app.use("/api/v1", apiRouter);
 
-app.get("/", (_, res) => {
-  res.send("TFD Manpower Allocation API running!");
+// app.get("/", (_, res) => {
+//   res.send("TFD Manpower Allocation API running!");
+// });
+
+// Serve the frontend static files
+app.use(express.static(path.join(__dirname, "../../frontend/dist")));
+
+// Fallback to index.html for SPA routes
+app.get("/*splat", (_, res) => {
+  res.sendFile(path.join(__dirname, "../../frontend/dist", "index.html"));
 });
 
 // Health check endpoint that includes task status service info

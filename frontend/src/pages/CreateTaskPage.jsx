@@ -1,10 +1,11 @@
-// pages/CreateTaskPage.jsx
+// pages/CreateTaskPage.jsx - Updated with improved time picker
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, RefreshCw, Calendar, Clock, User } from 'lucide-react';
+import { ArrowLeft, RefreshCw, User } from 'lucide-react';
 import axios from 'axios';
 import { getToken } from '../utils/auth';
 import { BASE_URL } from '../config/api';
+import QuickTimePicker from '../components/QuickTimePicker';
 
 const CreateTaskPage = () => {
   const navigate = useNavigate();
@@ -15,16 +16,19 @@ const CreateTaskPage = () => {
   const [availableEngineers, setAvailableEngineers] = useState([]);
   const [fetchingEngineers, setFetchingEngineers] = useState(false);
   
+  // Get today's date for default values
+  const today = new Date().toISOString().split('T')[0];
+  
   const [taskForm, setTaskForm] = useState({
     engineerInCharge: '',
     project: '',
     timeSlots: [
       {
         id: 1,
-        startDate: '',
-        startTime: '',
-        endDate: '',
-        endTime: ''
+        startDate: today,
+        startTime: '09:00',
+        endDate: today,
+        endTime: '17:00'
       }
     ],
     assignedEngineers: [],
@@ -33,39 +37,21 @@ const CreateTaskPage = () => {
     remarks: ''
   });
 
-  // Add new time slot
-  const addTimeSlot = () => {
-    const newTimeSlot = {
-      id: Date.now(),
-      startDate: '',
-      startTime: '',
-      endDate: '',
-      endTime: ''
-    };
+  // Handle time slots change from QuickTimePicker
+  const handleTimeSlotsChange = (newTimeSlots) => {
     setTaskForm(prev => ({
       ...prev,
-      timeSlots: [...prev.timeSlots, newTimeSlot]
+      timeSlots: newTimeSlots
     }));
-  };
-
-  // Remove time slot
-  const removeTimeSlot = (id) => {
-    if (taskForm.timeSlots.length > 1) {
+    
+    // Clear available engineers when time slots change
+    if (availableEngineers.length > 0) {
+      setAvailableEngineers([]);
       setTaskForm(prev => ({
         ...prev,
-        timeSlots: prev.timeSlots.filter(slot => slot.id !== id)
+        assignedEngineers: []
       }));
     }
-  };
-
-  // Update time slot
-  const updateTimeSlot = (id, field, value) => {
-    setTaskForm(prev => ({
-      ...prev,
-      timeSlots: prev.timeSlots.map(slot =>
-        slot.id === id ? { ...slot, [field]: value } : slot
-      )
-    }));
   };
 
   // Fetch available engineers based on time slots
@@ -78,6 +64,22 @@ const CreateTaskPage = () => {
     if (validTimeSlots.length === 0) {
       setError('Please specify at least one complete time slot to check engineer availability');
       return;
+    }
+
+    // Validate time slot logic
+    for (const slot of validTimeSlots) {
+      const startDateTime = new Date(`${slot.startDate}T${slot.startTime}`);
+      const endDateTime = new Date(`${slot.endDate}T${slot.endTime}`);
+      
+      if (startDateTime >= endDateTime) {
+        setError('End time must be after start time for all time slots');
+        return;
+      }
+      
+      if (startDateTime < new Date()) {
+        setError('Start time cannot be in the past');
+        return;
+      }
     }
 
     setFetchingEngineers(true);
@@ -108,6 +110,9 @@ const CreateTaskPage = () => {
       const data = response.data;
       if (data.success) {
         setAvailableEngineers(data.engineers);
+        if (data.engineers.length === 0) {
+          setError('No engineers are available during the specified time slots. Please choose different times.');
+        }
       } else {
         setError('Failed to fetch available engineers');
       }
@@ -172,6 +177,11 @@ const CreateTaskPage = () => {
         setError('End time must be after start time for all time slots');
         return;
       }
+      
+      if (startDateTime < new Date()) {
+        setError('Start time cannot be in the past');
+        return;
+      }
     }
 
     setLoading(true);
@@ -210,33 +220,41 @@ const CreateTaskPage = () => {
         alert('Task created successfully!');
         navigate('/manager');
       } else {
-        setError(data.error || 'Failed to create task');
+        if (data.conflicts) {
+          // Handle availability conflicts
+          setError(`Engineer availability conflict: ${data.error}`);
+        } else {
+          setError(data.error || 'Failed to create task');
+        }
       }
     } catch (error) {
       console.error('Error creating task:', error);
-      setError(error.response?.data?.error || 'Failed to create task. Please try again.');
+      if (error.response?.status === 409) {
+        // Conflict error - engineers not available
+        setError(error.response.data.error || 'One or more engineers are not available during the specified time slots');
+      } else {
+        setError(error.response?.data?.error || 'Failed to create task. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
   };
-
-  // Get today's date for min date input
-  const today = new Date().toISOString().split('T')[0];
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center">
-              <button
-                onClick={() => navigate('/manager')}
-                className="p-2 text-gray-400 hover:text-gray-600 transition-colors rounded-lg hover:bg-gray-100 mr-3"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
+          <div className="flex items-center h-16">
+            <button
+              onClick={() => navigate('/manager')}
+              className="mr-4 p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5 text-gray-600" />
+            </button>
+            <div>
               <h1 className="text-xl font-semibold text-gray-900">Create New Task</h1>
+              <p className="text-sm text-gray-600">Schedule work and assign engineers</p>
             </div>
           </div>
         </div>
@@ -244,19 +262,19 @@ const CreateTaskPage = () => {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Main Form */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Basic Information */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Basic Information</h3>
-              
-              {error && (
-                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-                  {error}
-                </div>
-              )}
+        {error && (
+          <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+            {error}
+          </div>
+        )}
 
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Column - Task Details */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Basic Task Information */}
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Task Information</h3>
+              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -267,20 +285,7 @@ const CreateTaskPage = () => {
                     value={taskForm.engineerInCharge}
                     onChange={(e) => setTaskForm({ ...taskForm, engineerInCharge: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Enter engineer name"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Project *
-                  </label>
-                  <input
-                    type="text"
-                    value={taskForm.project}
-                    onChange={(e) => setTaskForm({ ...taskForm, project: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Enter project name"
+                    placeholder="Name of responsible engineer"
                   />
                 </div>
 
@@ -289,40 +294,65 @@ const CreateTaskPage = () => {
                     Contact Number *
                   </label>
                   <input
-                    type="text"
+                    type="tel"
                     value={taskForm.contactNo}
                     onChange={(e) => setTaskForm({ ...taskForm, contactNo: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Enter contact number"
+                    placeholder="+91-9876543210"
                   />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Priority Level *
-                  </label>
-                  <select
-                    value={taskForm.priority}
-                    onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="NORMAL">Normal</option>
-                    <option value="HIGH">High</option>
-                  </select>
-                  <div className="mt-1 flex items-center">
-                    <div className={`w-3 h-3 rounded-full mr-2 ${
-                      taskForm.priority === 'HIGH' ? 'bg-red-500' : 'bg-green-500'
-                    }`}></div>
-                    <span className="text-xs text-gray-600">
-                      {taskForm.priority === 'HIGH' ? 'High Priority (Red)' : 'Normal Priority (Green)'}
-                    </span>
-                  </div>
                 </div>
               </div>
 
               <div className="mt-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Remarks
+                  Project Name *
+                </label>
+                <input
+                  type="text"
+                  value={taskForm.project}
+                  onChange={(e) => setTaskForm({ ...taskForm, project: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Enter project name"
+                />
+              </div>
+
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Priority Level
+                </label>
+                <div className="flex items-center space-x-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      value="NORMAL"
+                      checked={taskForm.priority === 'NORMAL'}
+                      onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}
+                      className="mr-2"
+                    />
+                    <div className="flex items-center">
+                      <div className="w-3 h-3 bg-green-500 rounded mr-2"></div>
+                      <span className="text-sm text-gray-700">Normal Priority</span>
+                    </div>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      value="HIGH"
+                      checked={taskForm.priority === 'HIGH'}
+                      onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}
+                      className="mr-2"
+                    />
+                    <div className="flex items-center">
+                      <div className="w-3 h-3 bg-red-500 rounded mr-2"></div>
+                      <span className="text-sm text-gray-700">High Priority</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Remarks (Optional)
                 </label>
                 <textarea
                   value={taskForm.remarks}
@@ -334,113 +364,55 @@ const CreateTaskPage = () => {
               </div>
             </div>
 
-            {/* Time Slots */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Time Slots *</h3>
-                <button
-                  onClick={addTimeSlot}
-                  className="inline-flex items-center px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                >
-                  <Plus className="w-4 h-4 mr-1" />
-                  Add Slot
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                {taskForm.timeSlots.map((slot, index) => (
-                  <div key={slot.id} className="p-4 border border-gray-200 rounded-lg">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-medium text-gray-900">Time Slot {index + 1}</h4>
-                      {taskForm.timeSlots.length > 1 && (
-                        <button
-                          onClick={() => removeTimeSlot(slot.id)}
-                          className="p-1 text-red-400 hover:text-red-600 transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Start Date & Time
-                        </label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            type="date"
-                            value={slot.startDate}
-                            onChange={(e) => updateTimeSlot(slot.id, 'startDate', e.target.value)}
-                            min={today}
-                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          />
-                          <input
-                            type="time"
-                            value={slot.startTime}
-                            onChange={(e) => updateTimeSlot(slot.id, 'startTime', e.target.value)}
-                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          End Date & Time
-                        </label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            type="date"
-                            value={slot.endDate}
-                            onChange={(e) => updateTimeSlot(slot.id, 'endDate', e.target.value)}
-                            min={slot.startDate || today}
-                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          />
-                          <input
-                            type="time"
-                            value={slot.endTime}
-                            onChange={(e) => updateTimeSlot(slot.id, 'endTime', e.target.value)}
-                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            {/* Improved Time Picker */}
+            <QuickTimePicker 
+              timeSlots={taskForm.timeSlots}
+              onTimeSlotsChange={handleTimeSlotsChange}
+            />
           </div>
 
-          {/* Available Engineers Sidebar */}
+          {/* Right Column - Engineer Assignment */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-lg shadow-sm p-6 sticky top-8">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Available Engineers</h3>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Assign Engineers
+                </h3>
                 <button
                   onClick={fetchAvailableEngineers}
                   disabled={fetchingEngineers}
                   className="inline-flex items-center px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
                 >
                   <RefreshCw className={`w-4 h-4 mr-1 ${fetchingEngineers ? 'animate-spin' : ''}`} />
-                  Refresh
+                  Check Availability
                 </button>
               </div>
 
               <p className="text-sm text-gray-600 mb-4">
-                Click "Refresh" to check engineer availability based on your specified time slots.
+                Complete the time slots above, then check engineer availability to assign team members.
               </p>
 
               {/* Selected Engineers */}
               {taskForm.assignedEngineers.length > 0 && (
                 <div className="mb-4">
-                  <h4 className="text-sm font-medium text-gray-900 mb-2">Selected Engineers ({taskForm.assignedEngineers.length})</h4>
+                  <h4 className="text-sm font-medium text-gray-900 mb-2">
+                    Selected Engineers ({taskForm.assignedEngineers.length})
+                  </h4>
                   <div className="space-y-2">
                     {taskForm.assignedEngineers.map((engineer) => (
                       <div key={engineer.id} className="flex items-center justify-between p-2 bg-blue-50 rounded-lg">
-                        <span className="text-sm font-medium text-blue-900">{engineer.name}</span>
+                        <div className="flex items-center">
+                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
+                            <User className="w-4 h-4 text-blue-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-blue-900 text-sm">{engineer.name}</p>
+                            <p className="text-xs text-blue-700">{engineer.username}</p>
+                          </div>
+                        </div>
                         <button
                           onClick={() => toggleEngineerSelection(engineer)}
-                          className="text-blue-600 hover:text-blue-800 text-xs"
+                          className="text-red-600 hover:text-red-800 text-xs"
                         >
                           Remove
                         </button>
@@ -452,39 +424,48 @@ const CreateTaskPage = () => {
 
               {/* Available Engineers List */}
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {availableEngineers.length === 0 ? (
+                {fetchingEngineers ? (
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-green-600 mx-auto"></div>
+                    <p className="mt-2 text-sm text-gray-600">Checking availability...</p>
+                  </div>
+                ) : availableEngineers.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
                     <User className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                    <p className="text-sm">No engineers data available</p>
-                    <p className="text-xs">Set time slots and click refresh</p>
+                    <p className="text-sm">Click "Check Availability" to see available engineers</p>
                   </div>
                 ) : (
-                  availableEngineers.map((engineer) => {
-                    const isSelected = taskForm.assignedEngineers.some(e => e.id === engineer.id);
-                    return (
-                      <button
-                        key={engineer.id}
-                        onClick={() => toggleEngineerSelection(engineer)}
-                        className={`w-full text-left p-3 rounded-lg border transition-colors ${
-                          isSelected
-                            ? 'border-blue-500 bg-blue-50 text-blue-900'
-                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="font-medium">{engineer.name}</p>
-                            <p className="text-sm text-gray-600">{engineer.username}</p>
-                          </div>
-                          {isSelected && (
-                            <div className="w-4 h-4 bg-blue-600 rounded-full flex items-center justify-center">
-                              <div className="w-2 h-2 bg-white rounded-full"></div>
+                  <>
+                    <h4 className="text-sm font-medium text-gray-700 mb-2">
+                      Available Engineers ({availableEngineers.length})
+                    </h4>
+                    {availableEngineers.map((engineer) => {
+                      const isSelected = taskForm.assignedEngineers.some(e => e.id === engineer.id);
+                      return (
+                        <button
+                          key={engineer.id}
+                          onClick={() => toggleEngineerSelection(engineer)}
+                          className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                            isSelected
+                              ? 'border-blue-500 bg-blue-50 text-blue-900'
+                              : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-medium">{engineer.name}</p>
+                              <p className="text-sm text-gray-600">{engineer.username}</p>
                             </div>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })
+                            {isSelected && (
+                              <div className="w-4 h-4 bg-blue-600 rounded-full flex items-center justify-center">
+                                <div className="w-2 h-2 bg-white rounded-full"></div>
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </>
                 )}
               </div>
             </div>

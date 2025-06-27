@@ -1,4 +1,4 @@
-// pages/EngineerManagementPage.jsx
+// pages/EngineersPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Users, Clock, CheckCircle, AlertCircle, Calendar, User, Search, RefreshCw } from 'lucide-react';
@@ -6,7 +6,7 @@ import axios from 'axios';
 import { getToken } from '../utils/auth';
 import { BASE_URL } from '../config/api';
 
-const EngineerManagementPage = () => {
+const EngineersPage = () => {
   const navigate = useNavigate();
   const token = getToken();
   
@@ -16,6 +16,7 @@ const EngineerManagementPage = () => {
   const [activeTab, setActiveTab] = useState('available'); // 'available' or 'busy'
   const [selectedEngineer, setSelectedEngineer] = useState(null);
   const [engineerTasks, setEngineerTasks] = useState([]);
+  const [loadingEngineerTasks, setLoadingEngineerTasks] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
 
@@ -103,11 +104,13 @@ const EngineerManagementPage = () => {
     return Array.from(engineerStatusMap.values());
   };
 
-  const handleEngineerClick = async (engineer) => {
+  const showEngineerDetails = async (engineer) => {
     setSelectedEngineer(engineer);
+    setLoadingEngineerTasks(true);
+    setEngineerTasks([]); // Clear previous tasks
     
-    // Get all tasks (active and completed) for this engineer
     try {
+      // Get all tasks (active and completed) for this engineer
       const [activeResponse, completedResponse] = await Promise.all([
         axios.get(`${BASE_URL}/api/v1/tasks?status=ACTIVE`, {
           headers: { 'Authorization': `Bearer ${token}` }
@@ -131,12 +134,15 @@ const EngineerManagementPage = () => {
     } catch (error) {
       console.error('Error fetching engineer tasks:', error);
       setEngineerTasks([]);
+    } finally {
+      setLoadingEngineerTasks(false);
     }
   };
 
   const closeEngineerDetails = () => {
     setSelectedEngineer(null);
     setEngineerTasks([]);
+    setLoadingEngineerTasks(false);
   };
 
   const formatTimeSlots = (timeSlots) => {
@@ -219,7 +225,7 @@ const EngineerManagementPage = () => {
                 <ArrowLeft className="w-5 h-5" />
               </button>
               <div>
-                <h1 className="text-xl font-semibold text-gray-900">Engineer Management</h1>
+                <h1 className="text-xl font-semibold text-gray-900">TFD Manpower</h1>
                 <p className="text-sm text-gray-500">View engineer availability and task assignments</p>
               </div>
             </div>
@@ -254,40 +260,34 @@ const EngineerManagementPage = () => {
                     onClick={() => setActiveTab('available')}
                     className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
                       activeTab === 'available'
-                        ? 'border-blue-500 text-blue-600'
+                        ? 'border-green-500 text-green-600'
                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                     }`}
                   >
-                    Available Engineers
-                    <span className="ml-2 px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">
-                      {engineerStatusList.filter(e => e.status === 'available' || e.status === 'scheduled').length}
-                    </span>
+                    Available ({engineerStatusList.filter(e => e.status === 'available' || e.status === 'scheduled').length})
                   </button>
                   <button
                     onClick={() => setActiveTab('busy')}
                     className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
                       activeTab === 'busy'
-                        ? 'border-blue-500 text-blue-600'
+                        ? 'border-red-500 text-red-600'
                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                     }`}
                   >
-                    Busy Engineers
-                    <span className="ml-2 px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">
-                      {engineerStatusList.filter(e => e.status === 'busy').length}
-                    </span>
+                    Busy ({engineerStatusList.filter(e => e.status === 'busy').length})
                   </button>
                 </nav>
               </div>
 
               {/* Search */}
-              <div className="p-6 border-b border-gray-200">
+              <div className="p-4 border-b border-gray-200">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                   <input
                     type="text"
+                    placeholder="Search engineers..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search engineers by name or username..."
                     className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>
@@ -295,50 +295,48 @@ const EngineerManagementPage = () => {
 
               {/* Engineers Grid */}
               <div className="p-6">
-                {filteredEngineers.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                    <p className="text-lg font-medium text-gray-900 mb-2">
-                      No {activeTab === 'available' ? 'Available' : 'Busy'} Engineers
-                    </p>
-                    <p className="text-gray-600">
-                      {searchTerm ? 'No engineers match your search criteria.' : 
-                       activeTab === 'available' ? 'All engineers are currently busy with tasks.' : 
-                       'All engineers are currently available for new assignments.'}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {filteredEngineers.map((engineer) => (
-                      <div
-                        key={engineer.id}
-                        onClick={() => handleEngineerClick(engineer)}
-                        className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
-                      >
-                        <div className="flex items-start justify-between mb-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {filteredEngineers.map(engineer => (
+                    <div
+                      key={engineer.id}
+                      onClick={() => showEngineerDetails(engineer)}
+                      className="p-4 border border-gray-200 rounded-lg hover:shadow-md transition-all cursor-pointer hover:border-blue-300"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center">
+                          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mr-3">
+                            <User className="w-5 h-5 text-blue-600" />
+                          </div>
                           <div>
-                            <h4 className="font-medium text-gray-900">{engineer.name}</h4>
+                            <h3 className="font-medium text-gray-900">{engineer.name}</h3>
                             <p className="text-sm text-gray-600">@{engineer.username}</p>
                           </div>
-                          <span className={`inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(engineer.status)}`}>
-                            {getStatusIcon(engineer.status)}
-                            <span className="ml-1 capitalize">{engineer.status}</span>
-                          </span>
                         </div>
+                        <span className={`inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(engineer.status)}`}>
+                          {getStatusIcon(engineer.status)}
+                          <span className="ml-1 capitalize">{engineer.status}</span>
+                        </span>
+                      </div>
 
-                        <div className="text-sm text-gray-600">
-                          {engineer.status === 'busy' && engineer.currentTasks.length > 0 && (
-                            <p>Currently working on {engineer.currentTasks.length} task(s)</p>
-                          )}
-                          {engineer.status === 'scheduled' && engineer.upcomingTasks.length > 0 && (
-                            <p>Scheduled for {engineer.upcomingTasks.length} upcoming task(s)</p>
-                          )}
-                          {engineer.status === 'available' && (
-                            <p>Available for new assignments</p>
-                          )}
+                      <div className="text-sm text-gray-600 space-y-1">
+                        <div className="flex justify-between">
+                          <span>Current Tasks:</span>
+                          <span className="font-medium">{engineer.currentTasks?.length || 0}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Upcoming Tasks:</span>
+                          <span className="font-medium">{engineer.upcomingTasks?.length || 0}</span>
                         </div>
                       </div>
-                    ))}
+                    </div>
+                  ))}
+                </div>
+
+                {filteredEngineers.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                    <p className="text-lg font-medium text-gray-900 mb-2">No Engineers Found</p>
+                    <p className="text-gray-600">No engineers match your search criteria.</p>
                   </div>
                 )}
               </div>
@@ -354,7 +352,7 @@ const EngineerManagementPage = () => {
                     <h3 className="text-lg font-semibold text-gray-900">Engineer Details</h3>
                     <button
                       onClick={closeEngineerDetails}
-                      className="text-gray-400 hover:text-gray-600"
+                      className="text-gray-400 hover:text-gray-600 text-xl"
                     >
                       ×
                     </button>
@@ -382,7 +380,14 @@ const EngineerManagementPage = () => {
                     </h4>
                     
                     <div className="space-y-3 max-h-96 overflow-y-auto">
-                      {engineerTasks.length === 0 ? (
+                      {loadingEngineerTasks ? (
+                        <div className="flex items-center justify-center py-8">
+                          <div className="text-center">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+                            <p className="mt-2 text-sm text-gray-600">Loading tasks...</p>
+                          </div>
+                        </div>
+                      ) : engineerTasks.length === 0 ? (
                         <div className="text-center py-4 text-gray-500">
                           <Calendar className="w-8 h-8 text-gray-300 mx-auto mb-2" />
                           <p className="text-sm">No tasks assigned</p>
@@ -434,4 +439,4 @@ const EngineerManagementPage = () => {
   );
 };
 
-export default EngineerManagementPage;
+export default EngineersPage;
