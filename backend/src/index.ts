@@ -17,6 +17,14 @@ app.use("/api/v1", apiRouter);
 //   res.send("TFD Manpower Allocation API running!");
 // });
 
+
+// Health check endpoint that includes task status service info
+app.get("/health", (_, res) => {
+  res.json({
+    status: "OK",
+  });
+});
+
 // Serve the frontend static files
 app.use(express.static(path.join(__dirname, "../../frontend/dist")));
 
@@ -25,15 +33,6 @@ app.get("/*splat", (_, res) => {
   res.sendFile(path.join(__dirname, "../../frontend/dist", "index.html"));
 });
 
-// Health check endpoint that includes task status service info
-app.get("/health", (_, res) => {
-  const serviceStatus = taskStatusService.getStatus();
-  res.json({
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    taskStatusService: serviceStatus
-  });
-});
 
 // Start the task status service - check every 2 minutes for more responsiveness
 taskStatusService.startScheduledUpdates(2);

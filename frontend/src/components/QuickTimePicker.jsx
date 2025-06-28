@@ -52,14 +52,20 @@ const QuickTimePicker = ({ timeSlots, onTimeSlotsChange, className = "" }) => {
   };
 
   // Update specific time slot
-  const updateTimeSlot = (id, field, field2, value) => {
+  const updateTimeSlot = (id, field, value) => {
+    // console.log(`Updating slot ${id} field ${field} to ${value}`);
+    const newSlots = timeSlots.map(slot =>
+      slot.id === id ? { ...slot, [field]: value } : slot
+    );
+    onTimeSlotsChange(newSlots);
+  };
+  const updateTimeSlot2 = (id, field, field2, value) => {
     // console.log(`Updating slot ${id} field ${field} to ${value}`);
     const newSlots = timeSlots.map(slot =>
       slot.id === id ? { ...slot, [field]: value , [field2]:value } : slot
     );
     onTimeSlotsChange(newSlots);
   };
-
   // Apply time preset to current slot
   const applyTimePreset = (preset) => {
     const currentSlot = timeSlots[activeSlot];
@@ -117,8 +123,9 @@ const QuickTimePicker = ({ timeSlots, onTimeSlotsChange, className = "" }) => {
 
   // Handle time input with auto-rounding
   const handleTimeChange = (id, field, value) => {
-    const roundedTime = roundTime(value);
-    updateTimeSlot(id, field, roundedTime);
+    console.log(`Changing slot ${id} field ${field} to ${value}`);
+    // const roundedTime = roundTime(value);
+    updateTimeSlot(id, field, value);
   };
 
   // Generate next few days for quick date selection
@@ -220,7 +227,7 @@ const QuickTimePicker = ({ timeSlots, onTimeSlotsChange, className = "" }) => {
                   key={date.value}
                   onClick={() => {
                     // Fix: Update both start and end dates
-                    updateTimeSlot(currentSlot.id, 'endDate', 'startDate', date.value);
+                    updateTimeSlot2(currentSlot.id, 'endDate', 'startDate', date.value);
                     // updateTimeSlot(currentSlot.id, 'startDate', date.value);
                   }}
                   className={`p-2 text-center rounded-lg border transition-colors ${

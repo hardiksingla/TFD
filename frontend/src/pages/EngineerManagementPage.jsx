@@ -1,4 +1,4 @@
-// pages/EngineerManagementPage.jsx
+// pages/EngineerManagementPage.jsx - Clean version without debug logs
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Users, Clock, CheckCircle, AlertCircle, Calendar, User, Search, RefreshCw } from 'lucide-react';
@@ -13,7 +13,7 @@ const EngineerManagementPage = () => {
   const [loading, setLoading] = useState(true);
   const [engineers, setEngineers] = useState([]);
   const [tasks, setTasks] = useState([]);
-  const [activeTab, setActiveTab] = useState('available'); // 'available', 'busy', or 'schedule'
+  const [activeTab, setActiveTab] = useState('available');
   const [selectedEngineer, setSelectedEngineer] = useState(null);
   const [engineerTasks, setEngineerTasks] = useState([]);
   const [loadingEngineerTasks, setLoadingEngineerTasks] = useState(false);
@@ -27,6 +27,7 @@ const EngineerManagementPage = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
+      setError('');
       
       // Fetch all engineers and active tasks in parallel
       const [engineersResponse, tasksResponse] = await Promise.all([
@@ -39,21 +40,74 @@ const EngineerManagementPage = () => {
       ]);
 
       if (engineersResponse.data.success && tasksResponse.data.success) {
-        setEngineers(engineersResponse.data.engineers);
-        setTasks(tasksResponse.data.tasks);
+        setEngineers(engineersResponse.data.engineers || []);
+        setTasks(tasksResponse.data.tasks || []);
       } else {
-        setError('Failed to fetch data');
+        setError('Failed to fetch data from server');
       }
     } catch (error) {
       console.error('Error fetching data:', error);
-      setError('Failed to fetch data');
+      if (error.response?.status === 401) {
+        setError('Authentication failed. Please login again.');
+      } else {
+        setError(error.response?.data?.error || 'Failed to fetch data');
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  const getEngineerStatus = () => {
+    const currentTime = new Date();
+    
+    return engineers.map(engineer => {
+      // Find tasks where this engineer is assigned
+      const currentTasks = tasks.filter(task => {
+        if (!task.assignedTo || !Array.isArray(task.assignedTo)) return false;
+        if (!task.assignedTo.includes(engineer.id)) return false;
+        
+        // Check if any time slot is currently active
+        const isCurrentlyActive = task.timeSlots && Array.isArray(task.timeSlots) && task.timeSlots.some(slot => {
+          const startTime = new Date(slot.startDateTime);
+          const endTime = new Date(slot.endDateTime);
+          return currentTime >= startTime && currentTime <= endTime;
+        });
+        
+        return isCurrentlyActive;
+      });
+
+      const futureTasks = tasks.filter(task => {
+        if (!task.assignedTo || !Array.isArray(task.assignedTo)) return false;
+        if (!task.assignedTo.includes(engineer.id)) return false;
+        
+        // Check if any time slot is in the future
+        const hasFutureSlots = task.timeSlots && Array.isArray(task.timeSlots) && task.timeSlots.some(slot => {
+          const startTime = new Date(slot.startDateTime);
+          return startTime > currentTime;
+        });
+        
+        return hasFutureSlots;
+      });
+
+      // Status logic: only "busy" if currently working, otherwise "available"
+      // Engineers with only future tasks are considered "available" now
+      let status = 'available';
+      if (currentTasks.length > 0) {
+        status = 'busy';
+      }
+
+      return {
+        ...engineer,
+        status,
+        currentTasks: currentTasks.length,
+        futureTasks: futureTasks.length
+      };
+    });
+  };
+
   const getScheduleData = () => {
     const currentTime = new Date();
+    // Get today in local timezone
     const today = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate());
     
     // Find the furthest future date among all tasks
@@ -87,28 +141,38 @@ const EngineerManagementPage = () => {
       };
 
       dates.forEach(date => {
-        const dateStr = date.toISOString().split('T')[0];
+        // Convert date to IST (Asia/Kolkata) and get YYYY-MM-DD string
+        const istOffset = 5.5 * 60; // IST is UTC+5:30 in minutes
+        const istDate = new Date(date.getTime() + istOffset * 60000);
+        const dateStr = istDate.toISOString().split('T')[0];
         engineerSchedule.schedule[dateStr] = [];
       });
 
       // Fill in task data
       tasks.forEach(task => {
-        if (task.assignedTo && task.assignedTo.includes(engineer.id)) {
-          task.timeSlots.forEach(slot => {
-            const startDate = new Date(slot.startDateTime);
-            const endDate = new Date(slot.endDateTime);
-            const startDateStr = startDate.toISOString().split('T')[0];
-            
-            if (engineerSchedule.schedule[startDateStr]) {
-              engineerSchedule.schedule[startDateStr].push({
-                taskId: task.id,
-                project: task.project,
-                priority: task.priority,
-                startTime: startDate,
-                endTime: endDate
-              });
-            }
-          });
+        if (task.assignedTo && Array.isArray(task.assignedTo) && task.assignedTo.includes(engineer.id)) {
+          if (task.timeSlots && Array.isArray(task.timeSlots)) {
+            task.timeSlots.forEach(slot => {
+              const startDate = new Date(slot.startDateTime);
+              const endDate = new Date(slot.endDateTime);
+              
+              // Convert UTC time to local date for proper day assignment
+              const localStartDate = new Date(startDate.getTime() - (startDate.getTimezoneOffset() * 60000));
+              
+              // Get the local date string
+              const startDateStr = localStartDate.toISOString().split('T')[0];
+              
+              if (engineerSchedule.schedule[startDateStr]) {
+                engineerSchedule.schedule[startDateStr].push({
+                  taskId: task.id,
+                  project: task.project,
+                  priority: task.priority,
+                  startTime: startDate,
+                  endTime: endDate
+                });
+              }
+            });
+          }
         }
       });
 
@@ -118,49 +182,10 @@ const EngineerManagementPage = () => {
     return { scheduleData, dates };
   };
 
-  const getEngineerStatus = () => {
-    const currentTime = new Date();
-    
-    return engineers.map(engineer => {
-      const currentTasks = tasks.filter(task => {
-        if (!task.assignedTo || !task.assignedTo.includes(engineer.id)) return false;
-        
-        return task.timeSlots.some(slot => {
-          const startTime = new Date(slot.startDateTime);
-          const endTime = new Date(slot.endDateTime);
-          return currentTime >= startTime && currentTime <= endTime;
-        });
-      });
-
-      const futureTasks = tasks.filter(task => {
-        if (!task.assignedTo || !task.assignedTo.includes(engineer.id)) return false;
-        
-        return task.timeSlots.some(slot => {
-          const startTime = new Date(slot.startDateTime);
-          return startTime > currentTime;
-        });
-      });
-
-      let status = 'available';
-      if (currentTasks.length > 0) {
-        status = 'busy';
-      } else if (futureTasks.length > 0) {
-        status = 'scheduled';
-      }
-
-      return {
-        ...engineer,
-        status,
-        currentTasks: currentTasks.length,
-        futureTasks: futureTasks.length
-      };
-    });
-  };
-
   const showEngineerDetails = async (engineer) => {
     setSelectedEngineer(engineer);
     setLoadingEngineerTasks(true);
-    setEngineerTasks([]); // Clear previous tasks
+    setEngineerTasks([]);
     
     try {
       // Fetch both active and completed tasks for this engineer
@@ -181,7 +206,7 @@ const EngineerManagementPage = () => {
 
       // Filter tasks assigned to this engineer
       const engineerSpecificTasks = allTasks.filter(task => 
-        task.assignedTo && task.assignedTo.includes(engineer.id)
+        task.assignedTo && Array.isArray(task.assignedTo) && task.assignedTo.includes(engineer.id)
       );
 
       setEngineerTasks(engineerSpecificTasks);
@@ -200,7 +225,7 @@ const EngineerManagementPage = () => {
   };
 
   const formatTimeSlots = (timeSlots) => {
-    if (!timeSlots || timeSlots.length === 0) return 'No time slots';
+    if (!timeSlots || !Array.isArray(timeSlots) || timeSlots.length === 0) return 'No time slots';
     
     return timeSlots.slice(0, 2).map(slot => {
       const start = new Date(slot.startDateTime);
@@ -215,44 +240,58 @@ const EngineerManagementPage = () => {
       : 'bg-green-100 text-green-800';
   };
 
-  const getStatusColor = (status) => {
+  const getStatusColor = (status, engineer) => {
     switch (status) {
       case 'available':
-        return 'bg-green-100 text-green-800';
+        // Show different shades for available engineers with/without future tasks
+        return engineer?.futureTasks > 0 
+          ? 'bg-blue-100 text-blue-800'  // Available but has future tasks
+          : 'bg-green-100 text-green-800'; // Completely free
       case 'busy':
         return 'bg-red-100 text-red-800';
-      case 'scheduled':
-        return 'bg-yellow-100 text-yellow-800';
       default:
         return 'bg-gray-100 text-gray-800';
     }
   };
 
-  const getStatusIcon = (status) => {
+  const getStatusIcon = (status, engineer) => {
     switch (status) {
       case 'available':
-        return <CheckCircle className="w-4 h-4" />;
+        return engineer?.futureTasks > 0 ? <Clock className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />;
       case 'busy':
         return <AlertCircle className="w-4 h-4" />;
-      case 'scheduled':
-        return <Clock className="w-4 h-4" />;
       default:
         return <User className="w-4 h-4" />;
     }
   };
 
+  const getStatusText = (status, engineer) => {
+    if (status === 'available') {
+      return engineer?.futureTasks > 0 ? 'Available (Scheduled)' : 'Available';
+    }
+    return status === 'busy' ? 'Currently Busy' : status;
+  };
+
+  // Calculate engineer status
   const engineerStatusList = getEngineerStatus();
   const { scheduleData, dates } = getScheduleData();
   
+  // Filter engineers based on active tab and search term
   const filteredEngineers = engineerStatusList.filter(engineer => {
     const matchesSearch = engineer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          engineer.username.toLowerCase().includes(searchTerm.toLowerCase());
     
     if (activeTab === 'schedule') return matchesSearch;
     
-    const matchesTab = activeTab === 'available' 
-      ? engineer.status === 'available'
-      : engineer.status === 'busy';
+    // Updated tab filtering logic
+    let matchesTab = false;
+    if (activeTab === 'available') {
+      // Available includes engineers who are free now (even if they have future tasks)
+      matchesTab = engineer.status === 'available';
+    } else if (activeTab === 'busy') {
+      // Busy includes only engineers who are currently working on tasks
+      matchesTab = engineer.status === 'busy';
+    }
     
     return matchesSearch && matchesTab;
   });
@@ -320,8 +359,8 @@ const EngineerManagementPage = () => {
                         : 'text-gray-600 hover:text-gray-900'
                     }`}
                   >
-                    {tab === 'available' && 'Available'}
-                    {tab === 'busy' && 'Busy'}
+                    {tab === 'available' && `Available (${engineerStatusList.filter(e => e.status === 'available').length})`}
+                    {tab === 'busy' && `Currently Busy (${engineerStatusList.filter(e => e.status === 'busy').length})`}
                     {tab === 'schedule' && 'Schedule View'}
                   </button>
                 ))}
@@ -372,7 +411,11 @@ const EngineerManagementPage = () => {
                         <div className="text-xs text-gray-600">@{engineer.username}</div>
                       </div>
                       {dates.slice(0, 7).map(date => {
-                        const dateStr = date.toISOString().split('T')[0];
+                        // Convert date to IST (Asia/Kolkata) and get YYYY-MM-DD string
+                        const istOffset = 5.5 * 60; // IST is UTC+5:30 in minutes
+                        const istDate = new Date(date.getTime() + istOffset * 60000);
+                        const dateStr = istDate.toISOString().split('T')[0];
+
                         const dayTasks = engineer.schedule[dateStr] || [];
                         return (
                           <div key={dateStr} className="bg-white p-2 min-h-[60px]">
@@ -407,41 +450,58 @@ const EngineerManagementPage = () => {
             </div>
           ) : (
             // List View (Available/Busy)
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredEngineers.map(engineer => (
-                <div
-                  key={engineer.id}
-                  onClick={() => showEngineerDetails(engineer)}
-                  className="bg-white p-4 rounded-lg shadow hover:shadow-md transition-shadow cursor-pointer border-l-4 border-blue-500"
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mr-3">
-                        <User className="w-5 h-5 text-blue-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-gray-900">{engineer.name}</h3>
-                        <p className="text-sm text-gray-600">@{engineer.username}</p>
-                      </div>
-                    </div>
-                    <span className={`inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(engineer.status)}`}>
-                      {getStatusIcon(engineer.status)}
-                      <span className="ml-1 capitalize">{engineer.status}</span>
-                    </span>
-                  </div>
-
-                  <div className="text-sm text-gray-600 space-y-1">
-                    <div className="flex justify-between">
-                      <span>Current Tasks:</span>
-                      <span className="font-medium">{engineer.currentTasks}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Scheduled Tasks:</span>
-                      <span className="font-medium">{engineer.futureTasks}</span>
-                    </div>
-                  </div>
+            <div>
+              {filteredEngineers.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    No {activeTab === 'busy' ? 'currently busy' : activeTab} engineers found
+                  </h3>
+                  <p className="text-gray-600">
+                    {searchTerm ? 'Try adjusting your search terms.' : 
+                     activeTab === 'busy' 
+                       ? 'No engineers are currently working on active tasks.' 
+                       : `No engineers are currently ${activeTab}.`}
+                  </p>
                 </div>
-              ))}
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredEngineers.map(engineer => (
+                    <div
+                      key={engineer.id}
+                      onClick={() => showEngineerDetails(engineer)}
+                      className="bg-white p-4 rounded-lg shadow hover:shadow-md transition-shadow cursor-pointer border-l-4 border-blue-500"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center">
+                          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mr-3">
+                            <User className="w-5 h-5 text-blue-600" />
+                          </div>
+                          <div>
+                            <h3 className="font-medium text-gray-900">{engineer.name}</h3>
+                            <p className="text-sm text-gray-600">@{engineer.username}</p>
+                          </div>
+                        </div>
+                        <span className={`inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(engineer.status, engineer)}`}>
+                          {getStatusIcon(engineer.status, engineer)}
+                          <span className="ml-1">{getStatusText(engineer.status, engineer)}</span>
+                        </span>
+                      </div>
+
+                      <div className="text-sm text-gray-600 space-y-1">
+                        <div className="flex justify-between">
+                          <span>Current Tasks:</span>
+                          <span className="font-medium">{engineer.currentTasks}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Scheduled Tasks:</span>
+                          <span className="font-medium">{engineer.futureTasks}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -471,9 +531,9 @@ const EngineerManagementPage = () => {
                       <p className="text-sm text-gray-600">@{selectedEngineer.username}</p>
                     </div>
                   </div>
-                  <span className={`inline-flex items-center px-3 py-1 text-sm font-semibold rounded-full ${getStatusColor(selectedEngineer.status)}`}>
-                    {getStatusIcon(selectedEngineer.status)}
-                    <span className="ml-1 capitalize">{selectedEngineer.status}</span>
+                  <span className={`inline-flex items-center px-3 py-1 text-sm font-semibold rounded-full ${getStatusColor(selectedEngineer.status, selectedEngineer)}`}>
+                    {getStatusIcon(selectedEngineer.status, selectedEngineer)}
+                    <span className="ml-1">{getStatusText(selectedEngineer.status, selectedEngineer)}</span>
                   </span>
                 </div>
 
@@ -482,42 +542,49 @@ const EngineerManagementPage = () => {
                     Task History ({engineerTasks.length})
                   </h4>
                   
-                  <div className="space-y-3 max-h-96 overflow-y-auto">
-                    {engineerTasks.length === 0 ? (
-                      <div className="text-center py-4 text-gray-500">
-                        <Calendar className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                        <p className="text-sm">No tasks assigned</p>
-                      </div>
-                    ) : (
-                      engineerTasks.map((task) => (
-                        <div
-                          key={task.id}
-                          onClick={() => navigate(`/manager/tasks/${task.id}`)}
-                          className="p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
-                        >
-                          <div className="flex items-start justify-between mb-2">
-                            <h5 className="font-medium text-gray-900 text-sm">{task.project}</h5>
-                            <div className="flex items-center space-x-1">
-                              <span className={`px-1 py-0.5 text-xs font-semibold rounded ${getPriorityColor(task.priority)}`}>
-                                {task.priority}
-                              </span>
-                              <span className={`px-1 py-0.5 text-xs font-semibold rounded ${
-                                task.status === 'COMPLETED' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
-                              }`}>
-                                {task.status}
-                              </span>
-                            </div>
-                          </div>
-                          <p className="text-xs text-gray-600">
-                            {formatTimeSlots(task.timeSlots)}
-                          </p>
-                          <p className="text-xs text-gray-500 mt-1">
-                            Created by: {task.createdBy?.name || 'Unknown'}
-                          </p>
+                  {loadingEngineerTasks ? (
+                    <div className="text-center py-4">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+                      <p className="text-sm text-gray-500 mt-2">Loading tasks...</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {engineerTasks.length === 0 ? (
+                        <div className="text-center py-4 text-gray-500">
+                          <Calendar className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                          <p className="text-sm">No tasks assigned</p>
                         </div>
-                      ))
-                    )}
-                  </div>
+                      ) : (
+                        engineerTasks.map((task) => (
+                          <div
+                            key={task.id}
+                            onClick={() => navigate(`/manager/tasks/${task.id}`)}
+                            className="p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
+                          >
+                            <div className="flex items-start justify-between mb-2">
+                              <h5 className="font-medium text-gray-900 text-sm">{task.project}</h5>
+                              <div className="flex items-center space-x-1">
+                                <span className={`px-1 py-0.5 text-xs font-semibold rounded ${getPriorityColor(task.priority)}`}>
+                                  {task.priority}
+                                </span>
+                                <span className={`px-1 py-0.5 text-xs font-semibold rounded ${
+                                  task.status === 'COMPLETED' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
+                                }`}>
+                                  {task.status}
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-xs text-gray-600">
+                              {formatTimeSlots(task.timeSlots)}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Created by: {task.createdBy?.name || 'Unknown'}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
               </>
             ) : (

@@ -39,35 +39,7 @@ const createUserSchema = z.object({
 router.post("/login", async (req:any, res:any) => {
   try {
     const { username, password } = loginSchema.parse(req.body);
-
-    // Check if it's admin login (stored in code)
-    if (username === ADMIN_CREDENTIALS.id) {
-      if (password === ADMIN_CREDENTIALS.password) {
-        const token = jwt.sign(
-          { 
-            id: ADMIN_CREDENTIALS.id, 
-            username: ADMIN_CREDENTIALS.id,
-            name: "Administrator",
-            role: ADMIN_CREDENTIALS.role 
-          },
-          JWT_SECRET
-        );
-        
-        return res.json({
-          success: true,
-          token,
-          user: {
-            id: ADMIN_CREDENTIALS.id,
-            username: ADMIN_CREDENTIALS.id,
-            name: "Administrator",
-            role: ADMIN_CREDENTIALS.role
-          }
-        });
-      } else {
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-    }
-
+    console.log("Login attempt for user:", username);
     // Check database for regular users using username
     const user = await prisma.user.findFirst({
       where: { username }

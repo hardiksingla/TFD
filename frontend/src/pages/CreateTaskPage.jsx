@@ -57,6 +57,7 @@ const CreateTaskPage = () => {
   // Fetch available engineers based on time slots
   const fetchAvailableEngineers = async () => {
     // Validate time slots first
+    console.log('Validating time slots:', taskForm.timeSlots);
     const validTimeSlots = taskForm.timeSlots.filter(slot => 
       slot.startDate && slot.startTime && slot.endDate && slot.endTime
     );
